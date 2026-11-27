@@ -24,6 +24,7 @@ parser.add_argument("--cutoff", type=float, default=0.01, help="high-pass cut-of
 parser.add_argument("--filter", choices=["butter", "detrend-surround"], default="butter",
                     help="butter = original high-pass, used for peak detection only; detrend-surround = linear detrend + 3-point surround average, applied to all voxels")
 parser.add_argument("--crop-start", type=float, default=0.0, help="discard the volumes before this time (s)")
+parser.add_argument("--period", type=float, default=0.0, help="breath-hold cycle length (s); if > 0, windows of one period start at the minimum of the cycle-folded GM signal (replaces find_peaks and --bound)")
 parser.add_argument("--no-show", action="store_true", help="save the QC plots as PNG in --outdir instead of showing them")
 args = parser.parse_args()
 os.makedirs(args.outdir, exist_ok=True)
@@ -126,6 +127,15 @@ plt.plot(X, GM_av)
 plt.hlines(np.mean(GM_av)+0.75*np.std(GM_av), 0, len(GM_av),linestyles='dashed', colors='black')
 GM_av_p = find_peaks(GM_av, height=(np.mean(GM_av)+0.75*np.std(GM_av)), distance=dist_param)
 GM_av_p = GM_av_p[0]
+##Optional period mode: one window per breath-hold cycle, starting at the minimum of the cycle-folded GM signal
+if args.period > 0:
+    P = int(round(args.period / TR))
+    fold = GM_av[:(t // P)*P].reshape(t // P, P).mean(0)
+    start0 = int(np.argmin(fold))
+    bound = P // 2
+    GM_av_p = np.arange(start0, t - P, P) + bound + 1
+    print("Period mode: window start at volume", start0, "of each", P, "volume cycle; windows:", len(GM_av_p))
+    plt.vlines(GM_av_p - bound - 1, GM_av.min(), GM_av.max(), colors="grey", linestyles="dotted")
 plt.scatter(GM_av_p, GM_av[GM_av_p], color='red', marker='x')
 show_or_save('GM_peaks.png')
 
