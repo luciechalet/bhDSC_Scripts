@@ -156,7 +156,7 @@ for i in range(x):
             else:
                 data_new = []
                 for l in GM_av_p:
-                    if (bound+1) < l < (t - (bound+1)):
+                    if bound < l < (t - bound):
                         data_new.append(Data[l-bound-1:l+bound-1])
                     else:
                         pass
