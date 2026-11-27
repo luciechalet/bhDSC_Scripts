@@ -1,3 +1,6 @@
+##Modified from https://github.com/JSchul1998/bhDSC_Scripts (Schulman et al., 2024, Sci Rep 14:7322)
+import argparse
+import os
 import numpy as np 
 import nibabel as nib
 from sklearn.utils.extmath import randomized_svd
@@ -5,12 +8,36 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter,filtfilt
 from scipy.signal import find_peaks
 
-###User must specify the pre-processed signal file, GM mask, and WM mask
-data_n = nib.load('Filepath/Signal.nii.gz')
+##Command-line arguments (replace the hardcoded file paths and scan parameters; defaults reproduce the original script)
+parser = argparse.ArgumentParser(description="bhDSC breath-hold averaging (Schulman et al., 2024)")
+parser.add_argument("--signal", required=True, help="pre-processed 4D signal NIfTI")
+parser.add_argument("--gm", required=True, help="GM mask NIfTI (voxels > 0 are used)")
+parser.add_argument("--wm", required=True, help="WM mask NIfTI (voxels > 0 are used)")
+parser.add_argument("--outdir", required=True, help="output folder")
+parser.add_argument("--tr", type=float, default=2.0, help="repetition time (s)")
+parser.add_argument("--te", type=float, default=0.02, help="echo time (s)")
+parser.add_argument("--bound", type=float, default=40.0, help="half window around each bolus peak (s)")
+parser.add_argument("--times", type=float, nargs=6, default=[0, 10, 20, 60, 60, 70], metavar="S",
+                    help="t1..t6 in the averaged window (s): pre-baseline start/end, bolus start/end, post-baseline start/end")
+parser.add_argument("--dist", type=float, default=40.0, help="minimum distance between breath-hold peaks (s)")
+parser.add_argument("--cutoff", type=float, default=0.01, help="high-pass cut-off (Hz)")
+parser.add_argument("--no-show", action="store_true", help="save the QC plots as PNG in --outdir instead of showing them")
+args = parser.parse_args()
+os.makedirs(args.outdir, exist_ok=True)
+
+def show_or_save(name):
+    if args.no_show:
+        plt.savefig(os.path.join(args.outdir, name))
+        plt.close()
+    else:
+        plt.show()
+
+###Load the pre-processed signal file, GM mask, and WM mask
+data_n = nib.load(args.signal)
 data = data_n.get_fdata()
-gm = nib.load('Filepath/GM.nii.gz')
+gm = nib.load(args.gm)
 gm = gm.get_fdata()
-wm = nib.load('Filepath/WM.nii.gz')
+wm = nib.load(args.wm)
 wm = wm.get_fdata()
 
 ##File Co-ordinates
@@ -20,22 +47,21 @@ z = data.shape[2]
 t = data.shape[3]
 X = np.array(range(t))
 
-##Bound specifies half of the window size that is centred around the bolus peak (i.e., If you want a final signal time-course duration of 20, specify 10 here)
-bound = 20
+##Window parameters are given in seconds and converted to volumes with the TR (defaults = original volumes at TR = 2 s)
+TR, TE = args.tr, args.te
+##Bound specifies half of the window size that is centred around the bolus peak
+bound = int(round(args.bound / TR))
 ##These are key timepoints of the final averaged bolus (first two: pre-baseline; middle two: Bolus; final two: post-baseline)
-##User can play around with time-points to centre around the bolus
-t1, t2, t3, t4, t5, t6 = 0,5,10,30,30,35
-##Minimum distance between breath-holds (modify if breath-holds are further apart)
-dist_param = 20
+t1, t2, t3, t4, t5, t6 = [int(round(s / TR)) for s in args.times]
+##Minimum distance between breath-holds
+dist_param = int(round(args.dist / TR))
 
-##Parameters needed for the initial high-pass filter (only modify parameters with associated comments)
-##TR and TE used in the scan 
-TR, TE = 2, 0.02
+##Parameters needed for the initial high-pass filter
 T = t*TR
 ##fs is the sampling frequency in your scan (1/TR)
-fs = 0.5
+fs = 1 / TR
 ##High-pass filter frequency cut-off (to remove low-frequency signal variations, and in effect, detrend the data)
-cutoff1 = 0.01
+cutoff1 = args.cutoff
 nyq = 0.5*fs
 order = 2
 ##Defines high pass filter function
@@ -82,7 +108,7 @@ plt.hlines(np.mean(GM_av)+0.75*np.std(GM_av), 0, len(GM_av),linestyles='dashed',
 GM_av_p = find_peaks(GM_av, height=(np.mean(GM_av)+0.75*np.std(GM_av)), distance=dist_param)
 GM_av_p = GM_av_p[0]
 plt.scatter(GM_av_p, GM_av[GM_av_p], color='red', marker='x')
-plt.show()
+show_or_save('GM_peaks.png')
 
 ##Obtains the breath-hold averaged GM time course to determine where bolus and baseline are located
 GM_new = []
@@ -99,7 +125,7 @@ plt.vlines(t1,np.mean(GM_new)-2*(np.std(GM_new)),np.mean(GM_new)+2*(np.std(GM_ne
 plt.vlines(t2,np.mean(GM_new)-2*(np.std(GM_new)),np.mean(GM_new)+2*(np.std(GM_new)), linestyles='dashed', colors='black')
 plt.vlines(t5,np.mean(GM_new)-2*(np.std(GM_new)),np.mean(GM_new)+2*(np.std(GM_new)), linestyles='dashed', colors='black')
 plt.vlines(t6,np.mean(GM_new)-2*(np.std(GM_new)),np.mean(GM_new)+2*(np.std(GM_new)), linestyles='dashed', colors='black')
-plt.show()
+show_or_save('GM_average_bolus.png')
 print(len(GM_new))
 print(np.argmax(GM_new))
 
@@ -164,20 +190,19 @@ dS_GM = np.array(ds_gm)
 dS_WM = np.array(ds_wm)
 
 
-##Outputs the breath-hold averaged time courses, CNR, and dS Maps (user must change filepath as needed)
+##Outputs the breath-hold averaged time courses, CNR, and dS Maps into --outdir
 newarr = S.reshape(x, y, z, len(GM_new))
 new_image = nib.Nifti1Image(newarr, data_n.affine)
-nib.save(new_image, 'Filepath/Average_Signal.nii.gz')
+nib.save(new_image, os.path.join(args.outdir, 'Average_Signal.nii.gz'))
 newarr = R.reshape(x, y, z, len(GM_new))
 new_image = nib.Nifti1Image(newarr, data_n.affine)
-nib.save(new_image, 'Filepath/Average_Relaxation.nii.gz')
+nib.save(new_image, os.path.join(args.outdir, 'Average_Relaxation.nii.gz'))
 newarr = cnr.reshape(x, y, z)
 new_image = nib.Nifti1Image(newarr, data_n.affine)
-nib.save(new_image, 'Filepath/CNR.nii.gz')
+nib.save(new_image, os.path.join(args.outdir, 'CNR.nii.gz'))
 newarr = ds.reshape(x, y, z)
 new_image = nib.Nifti1Image(newarr, data_n.affine)
-nib.save(new_image, 'Filepath/dS.nii.gz')
-
+nib.save(new_image, os.path.join(args.outdir, 'dS.nii.gz'))
 
 ##This final code computes the average GM and WM CNR and delta S values, along with the delta CNR (GM-WM)
 dSg_Mean = np.mean(dS_GM)
