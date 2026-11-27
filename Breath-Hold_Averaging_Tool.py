@@ -149,8 +149,8 @@ for i in range(x):
             data_mean = np.mean(Data)    
 
             if data_mean == 0:
-                S.append(Data[100-bound-1:100+bound-1])
-                R.append(Data[100-bound-1:100+bound-1])
+                S.append(np.zeros(2*bound))
+                R.append(np.zeros(2*bound))
                 cnr.append(0)
                 ds.append(0)
             else:
