@@ -107,9 +107,9 @@ def AIFmatrixMaker(aif):
 AIFmatfilt = AIFmatrixMaker(AIFv)
 
 ##Performs SVD with threshold (defined above) and outputs U,S,and Vt SVD matrices
-b1, b2, b3 = randomized_svd(AIFmatfilt, n_components = len(range(art_time[2],art_time[3])))
+b1, b2, b3 = randomized_svd(AIFmatfilt, n_components = len(range(art_time[2],art_time[3])), random_state=0)
 truncation1 = np.max(np.where(b2 >= thresh*np.max(b2))) + 1
-c1, c2, c3 = randomized_svd(AIFmatfilt, n_components = truncation1)
+c1, c2, c3 = randomized_svd(AIFmatfilt, n_components = truncation1, random_state=0)
 C1, C2, C3 = c1.T, np.diag(c2), c3.T
 C2i = np.linalg.inv(C2)
 
