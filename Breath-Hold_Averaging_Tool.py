@@ -5,7 +5,7 @@ import numpy as np
 import nibabel as nib
 from sklearn.utils.extmath import randomized_svd
 import matplotlib.pyplot as plt
-from scipy.signal import butter,filtfilt
+from scipy.signal import butter,filtfilt,detrend
 from scipy.signal import find_peaks
 
 ##Command-line arguments (replace the hardcoded file paths and scan parameters; defaults reproduce the original script)
@@ -21,6 +21,9 @@ parser.add_argument("--times", type=float, nargs=6, default=[0, 10, 20, 60, 60, 
                     help="t1..t6 in the averaged window (s): pre-baseline start/end, bolus start/end, post-baseline start/end")
 parser.add_argument("--dist", type=float, default=40.0, help="minimum distance between breath-hold peaks (s)")
 parser.add_argument("--cutoff", type=float, default=0.01, help="high-pass cut-off (Hz)")
+parser.add_argument("--filter", choices=["butter", "detrend-surround"], default="butter",
+                    help="butter = original high-pass, used for peak detection only; detrend-surround = linear detrend + 3-point surround average, applied to all voxels")
+parser.add_argument("--crop-start", type=float, default=0.0, help="discard the volumes before this time (s)")
 parser.add_argument("--no-show", action="store_true", help="save the QC plots as PNG in --outdir instead of showing them")
 args = parser.parse_args()
 os.makedirs(args.outdir, exist_ok=True)
@@ -39,6 +42,9 @@ gm = nib.load(args.gm)
 gm = gm.get_fdata()
 wm = nib.load(args.wm)
 wm = wm.get_fdata()
+
+##Optional crop: drop the volumes before --crop-start (e.g. the rest period before the breath-hold block)
+data = data[..., int(round(args.crop_start / args.tr)):]
 
 ##File Co-ordinates
 x = data.shape[0]
@@ -72,6 +78,16 @@ def butter_highpass_filter(data, cutoff1, fs, order):
     out = filtfilt(b, a, data)
     return out
 
+##Paper preprocessing (Schulman et al., 2024): linear detrend, mean added back; then 3-point surround average [1/4, 1/2, 1/4]
+##instead of the 1x5 Gaussian (too wide at long TR). The surround average cancels a volume-to-volume (label/control) alternation.
+def detrend_surround(sig):
+    out = detrend(sig, type='linear') + np.mean(sig)
+    sm = out.copy()
+    sm[1:-1] = 0.25*out[:-2] + 0.5*out[1:-1] + 0.25*out[2:]
+    sm[0] = 0.5*(out[0] + out[1])
+    sm[-1] = 0.5*(out[-2] + out[-1])
+    return sm
+
 ##This iterates through the signal time course map and applies the high-pass filter
 Y = []
 for i in range(x):
@@ -83,7 +99,10 @@ for i in range(x):
             if Data_mean == 0:
                 Y.append(np.zeros(t))
             else:
-                yy = butter_highpass_filter(Data, cutoff1, fs, order) + Data_mean
+                if args.filter == 'butter':
+                    yy = butter_highpass_filter(Data, cutoff1, fs, order) + Data_mean
+                else:
+                    yy = detrend_surround(Data)
                 Y.append(yy)
 Y = np.array(Y)
 Y = Y.reshape(x, y, z, t)
@@ -143,7 +162,7 @@ for i in range(x):
     print("Progression of Iterating", (i/data.shape[0])*100,"%")
     for j in range(y):
         for k in range(z):
-            Data = data[i, j, k]
+            Data = Y[i, j, k] if args.filter == 'detrend-surround' else data[i, j, k]
             Gm = gm[i,j,k]
             Wm = wm[i,j,k]
             data_mean = np.mean(Data)    
